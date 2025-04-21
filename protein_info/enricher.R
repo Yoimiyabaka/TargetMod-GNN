@@ -1,0 +1,369 @@
+
+######################### 准备工作，不运行
+#if (!require("BiocManager")) install.packages("BiocManager")
+#BiocManager::install(c("biomaRt", "clusterProfiler", "org.Hs.eg.db"))
+idx <- 283
+path_1=paste0('result_save/gnn_2025-03-14-18-49-10/GNNExplainer/node_',idx,'/protein_name_',idx,'.csv')
+protein_ids <- read.csv(path_1)
+protein_ids <- as.character(protein_ids$Protein_Name)
+
+#所有id转换
+path_all <- 'protein_info/protein.SHS27k.sequences.dictionary.pro3.tsv'
+protein_ids_all <- read.csv(path_all,sep = '\t',header = FALSE)
+protein_ids_cleaned <- gsub("9606\\.", "", protein_ids_all[[1]])
+
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+
+# 将 ENSP 转换为 Entrez Gene ID 和 Gene Symbol
+converted <- getBM(
+  attributes = c("ensembl_peptide_id", "entrezgene_id"),
+  filters = "ensembl_peptide_id",
+  values = protein_ids_cleaned,
+  mart = ensembl
+)
+write.table(converted, "protein_info/entrezgene_id_converted_data.tsv", sep = "\t", quote = FALSE, row.names = FALSE)
+
+###########################################子图富集#########################################
+####################### 从这里开始运行
+
+library(biomaRt)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(ggplot2)
+
+# 读取idx与esmbl_id
+protein_id_with_idx <- read.csv('result_save/gnn_2025-03-14-18-49-10/GNNExplainer/most_importance_score_with_idx.csv')
+protein_idx <- as.character(protein_id_with_idx$idx)
+gene_converted <- read.table("protein_info/entrezgene_id_converted_data.tsv",stringsAsFactors = FALSE,header = TRUE,sep = '\t')
+
+enricher_idx <- function(idx){
+  path_1=paste0('result_save/gnn_2025-03-14-18-49-10/GNNExplainer/node_',idx,'/protein_name_',idx,'.csv')
+  protein_ids <- read.csv(path_1)
+  protein_ids <- as.character(protein_ids$Protein_Name)
+  gene_converted_selected <- gene_converted[gene_converted$ensembl_peptide_id %in% protein_ids,]
+  gene_list <- as.character(gene_converted_selected$entrezgene_id)
+  
+  if (length(gene_list) == 0) {
+    warning(paste0("Warning: No genes found for idx ", idx, ". Skipping enrichment analysis."))
+    return()
+  }
+  
+  
+  path_2=paste0('result_save/gnn_2025-03-14-18-49-10/GNNExplainer/node_',idx,'/enrich')
+  # 创建保存目录
+  if (!dir.exists(path_2)) {
+    dir.create(path_2)  # 递归创建目录
+  }
+  
+  # dotplot 函数
+  dotplot_GO <- function(ego_obj, title, path) {
+    png(path, width = 10, height = 12, units = "in", res = 300)
+    print(dotplot(ego_obj, showCategory = 20) + ggtitle(title))
+    dev.off()
+  }
+  
+  # barplot 函数
+  barplot_GO <- function(ego_obj, title, path) {
+    png(path, width = 10, height = 12, units = "in", res = 300)
+    print(barplot(ego_obj, showCategory = 20, font.size = 12) + 
+            ggtitle(title) +
+            theme(axis.text.y = element_text(size = 12)))
+    dev.off()
+  }
+  
+  ## GO富集分析
+  run_enrichGO <- function(ont_type, title) {
+    ego <- enrichGO(
+      gene          = gene_list,
+      OrgDb         = org.Hs.eg.db,
+      keyType       = "ENTREZID",
+      ont           = ont_type,       
+      pAdjustMethod = "BH",      
+      pvalueCutoff  = 0.05,       
+      qvalueCutoff  = 0.2,        
+      readable      = TRUE        
+    )
+    # 如果富集结果为空，则跳过
+    if (is.null(ego) || nrow(as.data.frame(ego)) == 0) {
+      warning(paste0("Warning: No enrichment results for ", ont_type, " (idx ", idx, "). Skipping plots."))
+      return()
+    }
+    
+    # 保存GO结果
+    path_ego <- paste0(path_2, '/GO_', ont_type, '_', idx, '.tsv')
+    write.table(as.data.frame(ego), path_ego, sep = "\t", quote = FALSE, row.names = FALSE)
+    
+    # 绘制点图
+    path_dot <- paste0(path_2, '/GO_', ont_type, '_dot_', idx, '.png')
+    dotplot_GO(ego, paste0("GO ", title, " Dotplot"), path_dot)
+    
+    # 绘制条状图
+    path_bar <- paste0(path_2, '/GO_', ont_type, '_bar_', idx, '.png')
+    barplot_GO(ego, paste0("GO ", title, " Barplot"), path_bar)
+  }
+  
+  # 运行BP、MF、CC分析
+  run_enrichGO("BP", "Biological Processes")
+  run_enrichGO("MF", "Molecular Functions")
+  run_enrichGO("CC", "Cellular Components")
+  
+  
+  ## KEGG分析
+  kk <- enrichKEGG(
+    gene = gene_list,
+    organism = "hsa",
+    pvalueCutoff = 0.05,
+    qvalueCutoff = 0.2
+  )
+  # 如果富集结果为空，则跳过
+  if (is.null(kk) || nrow(as.data.frame(kk)) == 0) {
+    warning(paste0("Warning: No enrichment results for kk (idx ", idx, "). Skipping plots."))
+    return()
+  }
+  # 保存KEGG结果
+  path_kk <- paste0(path_2, '/KEGG_', idx, '.tsv')
+  write.table(as.data.frame(kk), path_kk, sep = "\t", quote = FALSE, row.names = FALSE)
+  
+  # 绘制KEGG点图（PNG格式）
+  path_4_dot <- paste0(path_2,'/KEGG_dot_',idx,'.png')
+  png(path_4_dot, width = 10, height = 12, units = "in", res = 300)
+  print(dotplot(kk, showCategory = 20))
+  dev.off()
+  
+  # 绘制KEGG条状图（PNG格式）
+  path_4_bar <- paste0(path_2,'/KEGG_bar_',idx,'.png')
+  png(path_4_bar, width = 10, height = 12, units = "in", res = 300)
+  print(barplot(kk, showCategory = 20, font.size = 12) + 
+          ggtitle("KEGG Pathways") +
+          theme(axis.text.y = element_text(size = 12)))
+  dev.off()
+}
+#enricher_idx(101)
+for (idx in protein_idx){
+  #idx <- 1056
+  enricher_idx(idx)
+  #break
+}
+####################### 结束
+
+###########################################ami类别#########################################
+####################### 从这里开始运行
+library(biomaRt)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(ggplot2)
+library(dplyr)
+# 读取idx与esmbl_id
+
+gene_converted <- read.table("protein_info/entrezgene_id_converted_data.tsv",stringsAsFactors = FALSE,header = TRUE,sep = '\t')
+final_results <- list()
+for (i in 1:nrow(gene_converted)) {
+  protein_id <- gene_converted$ensembl_peptide_id[i]
+  entrez_id <- as.character(gene_converted$entrezgene_id[i])
+  
+  run_enrichGO <- function(entrez_id,ont_type) {
+    go_result <- enrichGO(
+      gene          = entrez_id,
+      OrgDb         = org.Hs.eg.db,
+      keyType       = "ENTREZID",
+      ont           = ont_type,       
+      pAdjustMethod = "BH",      
+      readable      = TRUE        
+    )
+    # 如果富集结果为空，则跳过
+    if (is.null(go_result) || nrow(as.data.frame(go_result)) == 0) {
+      go_top <- 'NA'
+    }
+    else{
+      go_top <- go_result@result %>% arrange(desc(Count), pvalue) %>% slice(1) %>% pull(Description)
+    }
+    return(go_top)
+  }
+  go_bp_top <- run_enrichGO(entrez_id,"BP")
+  go_mf_top <- run_enrichGO(entrez_id,"MF")
+  go_cc_top <- run_enrichGO(entrez_id,"CC")
+  
+  # KEGG 富集分析
+  kegg_result <- enrichKEGG(gene = entrez_id,
+                            organism = 'hsa',
+                            keyType = "kegg"
+                             )
+  
+  # 如果富集结果为空，则跳过
+  if (is.null(kegg_result) || nrow(as.data.frame(kegg_result)) == 0) {
+    top_kegg_Description <- 'NA'
+    top_kegg_category <- 'NA'
+    top_kegg_subcategory <- 'NA'
+  }
+  else{
+    top_kegg <- kegg_result@result %>% arrange(desc(Count), pvalue) %>% slice(1)
+    top_kegg_Description <-  top_kegg%>% pull(Description)
+    top_kegg_category <- top_kegg %>% pull(category)
+    top_kegg_subcategory <- top_kegg %>% pull(subcategory)
+  }
+  
+  # 存储结果
+  final_results[[protein_id]] <- data.frame(
+    Protein_ID   = protein_id,
+    GO_BP        = go_bp_top,  
+    GO_MF        = go_mf_top,  
+    GO_CC        = go_cc_top,  
+    KEGG_Description = top_kegg,
+    KEGG_category=top_kegg_category,
+    KEGG_subcategory=top_kegg_subcategory,
+    stringsAsFactors = FALSE
+  )
+  print(i)
+  
+}
+combined_results <- bind_rows(final_results)
+
+write.csv(combined_results, "result_save/gnn_2025-03-14-18-49-10/GNNExplainer/GO_KEGG_all_each_node.csv", row.names = FALSE)
+
+
+###########################################药物靶标通路#########################################
+####################### 准备工作
+
+library(org.Hs.eg.db)
+BiocManager::install("KEGGREST")
+
+gene_converted <- read.table("protein_info/entrezgene_id_converted_data.tsv",stringsAsFactors = FALSE,header = TRUE,sep = '\t')
+gene_converted_subset <- gene_converted[, c("ensembl_peptide_id", "entrezgene_id")]
+colnames(gene_converted_subset) <- c("ENSEMBL_ID", "ENTREZID")
+gene_converted_clean <- gene_converted_subset
+# 获取symbol相关信息
+gene_symbols <- bitr(
+  gene_converted_clean$ENTREZID,
+  fromType = "ENTREZID",
+  toType = "SYMBOL",
+  OrgDb = org.Hs.eg.db
+)
+gene_converted_clean$ENTREZID <- as.character(gene_converted_clean$ENTREZID)
+gene_symbols$ENTREZID <- as.character(gene_symbols$ENTREZID)
+# 4. 合并 SYMBOL 到映射表
+gene_full_info <- gene_converted_clean %>%
+  left_join(gene_symbols, by = "ENTREZID")
+write.table(gene_full_info, "protein_info/entrezgene_id_and_symbol_converted.tsv", sep = "\t", quote = FALSE, row.names = FALSE)
+
+##获取所有药物通路
+library(KEGGREST)
+drug_list <- keggList("drug")  
+drug_ids <- names(drug_list)
+human_drugs <- list()
+
+for (drug_id in drug_ids) {
+  tryCatch({
+    drug_entry <- keggGet(drug_id)[[1]]
+    # 提取所有可能的靶标字段
+    targets <- unlist(drug_entry[c("TARGET", "METABOLISM", "INTERACTION")])
+    human_targets <- grep("hsa:", targets, value = TRUE)
+    if (length(human_targets) > 0) {
+      human_drugs[[drug_id]] <- list(
+        name = drug_entry$NAME,
+        targets = human_targets
+      )
+    }
+    Sys.sleep(1)  # 增加延迟至1秒
+  }, error = function(e) {
+    message(paste0("Error in ", drug_id, ": ", e$message))
+  })
+}
+
+all_human_targets <- unique(unlist(lapply(human_drugs, function(x) x$targets)))
+
+# 获取这些基因参与的通路
+pathway_list <- lapply(all_human_targets, function(gene_id) {
+  gene_entry <- tryCatch(
+    keggGet(gene_id)[[1]],
+    error = function(e) NULL
+  )
+  if (!is.null(gene_entry) && "PATHWAY" %in% names(gene_entry)) {
+    return(gene_entry$PATHWAY)
+  } else {
+    return(NULL)
+  }
+})
+
+# 合并去重
+drug_related_pathways <- unique(unlist(pathway_list))
+
+####################### 从这里开始运行
+library(clusterProfiler)
+library(KEGGREST)
+library(dplyr)
+library(org.Hs.eg.db)
+protein_id_with_idx <- read.csv('result_save/gnn_2025-03-14-18-49-10/GNNExplainer/most_importance_score_with_idx.csv')
+gene_full_info  <- read.table("protein_info/entrezgene_id_and_symbol_converted.tsv",stringsAsFactors = FALSE,header = TRUE,sep = '\t')
+gene_converted <- read.table("protein_info/entrezgene_id_converted_data.tsv",stringsAsFactors = FALSE,header = TRUE,sep = '\t')
+
+kegg_data <- clusterProfiler::download_KEGG("hsa")
+all_pathways <- kegg_data$KEGGPATHID2NAME
+drug_related_pathways <- all_pathways[grep("drug|metabolism|resistance", all_pathways$to, ignore.case = TRUE), ]
+drug_pathway_ids <- unique(drug_related_pathways$from)
+
+
+
+
+enricher_drug_idx <- function(idx){
+  path_1=paste0('result_save/gnn_2025-03-14-18-49-10/GNNExplainer/node_',idx,'/protein_name_',idx,'.csv')
+  protein_ids <- read.csv(path_1)
+  protein_ids <- as.character(protein_ids$Protein_Name)
+  gene_converted_selected <- gene_converted[gene_converted$ensembl_peptide_id %in% protein_ids,]
+  gene_list <- as.character(gene_converted_selected$entrezgene_id)
+  
+  kk <- enrichKEGG(
+    gene = gene_list,
+    organism = "hsa"
+  )
+  
+  # 4. 转换为 data.frame 并筛选与药物相关的通路
+  kegg_df <- as.data.frame(kk)
+  filtered_kegg <- kegg_df #%>%
+  #  filter(ID %in% drug_pathway_ids)
+  
+  if (nrow(filtered_kegg) == 0) {
+    message(paste("No drug-related pathways found for idx", idx))
+    return(NULL)
+  }
+  
+  # 5. 整理基本信息
+  result <- dplyr::select(filtered_kegg, ID, Description, geneID)
+  result <- dplyr::rename(result,
+                          Pathway_ID = ID,
+                          Pathway_Name = Description,
+                          Matched_Genes = geneID)
+  
+  # 6. 拆分 ENTREZ ID 字符串为一行一个
+  result_long <- result %>%
+    mutate(Matched_Genes = strsplit(as.character(Matched_Genes), "/")) %>%
+    tidyr::unnest(Matched_Genes)
+  
+  # 7. 类型转换，准备 join
+  result_long$Matched_Genes <- as.character(result_long$Matched_Genes)
+  gene_full_info$ENTREZID <- as.character(gene_full_info$ENTREZID)
+  
+  # 合并基因注释
+  final_result <- result_long %>%
+    left_join(gene_full_info, by = c("Matched_Genes" = "ENTREZID"))
+  
+  #整合为一行一个通路，多基因合并成字符串
+  final_result_collapsed <- final_result %>%
+    group_by(Pathway_ID, Pathway_Name) %>%
+    summarise(
+      ENTREZ_IDs = paste(Matched_Genes, collapse = "/"),
+      SYMBOLs = paste(unique(SYMBOL), collapse = "/"),
+      ENSEMBL_IDs = paste(unique(ENSEMBL_ID), collapse = "/"),
+      .groups = 'drop'
+    )
+  
+  path_2=paste0('result_save/gnn_2025-03-14-18-49-10/GNNExplainer/node_',idx,'/enrich')
+  path_kegg_drug <- paste0(path_2, "/kegg_result_all_node_",idx,".csv")
+  if (!is.null(final_result)) {
+    write.csv(final_result, path_kegg_drug, row.names = FALSE)
+  }
+}
+for (idx in protein_idx){
+  idx=101
+  enricher_drug_idx(idx)
+  break
+}
