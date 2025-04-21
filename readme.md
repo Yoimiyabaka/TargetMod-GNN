@@ -1,11 +1,12 @@
-# HIGH-PPI
-Hierarchical Graph Learning for Protein-Protein Interaction
+# TargetMod-GNN
+Target Module Identification via Graph Neural Networks
+A hierarchical GNN-based framework for drug target module discovery by integrating protein structure and interaction networks. The project leverages the HIGH-PPI model and GNNExplainer to identify interpretable target modules and reveal underlying mechanisms of drug action.
 ## Dependencies
-HIGH-PPI runs on Python 3.7-3.9. To install all dependencies, directly run:
+TargetMod-GNN runs on Python 3.7-3.9. To install all dependencies, directly run:
 ```
-cd HIGH-PPI-main
+cd TargetMod-GNN-main
 conda env create -f environment.yml
-conda activate HIGH-PPI
+conda activate TargetMod-GNN
 ```
 Download the following whl files to `./file/`: [torch-scatter](https://data.pyg.org/whl/torch-1.11.0%2Bcu102/torch_scatter-2.0.9-cp39-cp39-linux_x86_64.whl), [torch-sparse](https://data.pyg.org/whl/torch-1.11.0%2Bcu102/torch_sparse-0.6.13-cp39-cp39-linux_x86_64.whl), [torch-cluster](https://data.pyg.org/whl/torch-1.11.0%2Bcu102/torch_cluster-1.6.0-cp39-cp39-linux_x86_64.whl), [torch-spline-conv](https://data.pyg.org/whl/torch-1.11.0%2Bcu102/torch_spline_conv-1.2.1-cp39-cp39-linux_x86_64.whl).
 
@@ -28,9 +29,9 @@ Three datasets (SHS27k, SHS148k and STRING) can be downloaded from the [Google D
 * `edge_list_12`             Adjacency matrix for all proteins in SHS27k
 * `x_list`             Feature matrix for all proteins in SHS27k
 
-# PPI Prediction
+# drug target Prediction
 
-Example: predicting unknown PPIs in SHS27k datasets with native structures:
+Example: predicting unknown drug target in SHS27k datasets with native structures:
 
 ## Using Processed Data for SHS27k Dataset
 
@@ -49,7 +50,7 @@ python ./protein_info/generate_feat.py
 ```
 
 ## Training
-To predict PPIs, use 'model_train.py' script to train HIGH-PPI with the following options:
+To predict drug target, use 'model_train.py' script to train HIGH-PPI with the following options:
 * `ppi_path`             str, PPI network information
 * `pseq_path`             str, Protein sequences
 * `p_feat_matrix`       str, The feature matrix of all protein graphs
@@ -60,23 +61,3 @@ To predict PPIs, use 'model_train.py' script to train HIGH-PPI with the followin
 ```
 python model_train.py --ppi_path ./protein_info/protein.actions.SHS27k.STRING.pro2.txt --pseq ./protein_info/protein.SHS27k.sequences.dictionary.pro3.tsv --split random --p_feat_matrix ./protein_info/x_list.pt --p_adj_matrix ./protein_info/edge_list_12.npy --save_path ./result_save --epoch_num 5
 ```
-## Testing
-Run 'model_test.py' script to test HIGH-PPI with the following options:
-* `ppi_path`             str, PPI network information
-* `pseq_path`             str, Protein sequences
-* `p_feat_matrix`       str, The feature matrix of all protein graphs
-* `p_adj_matrix`       str, The adjacency matrix of all protein graphs
-* `model_path`       str, Path for trained model
-* `index_path`             str, Path for index being tested
-```
-python model_test.py --ppi_path ./protein_info/protein.actions.SHS27k.STRING.pro2.txt --pseq ./protein_info/protein.SHS27k.sequences.dictionary.pro3.tsv --p_feat_matrix ./protein_info/x_list.pt --p_adj_matrix ./protein_info/edge_list_12.npy --model_path ./result_save/gnn_2024-11-30-16-14-35\gnn_model_valid_best.ckpt --index_path train_val_split_data\node_split.json
-```
-## Output
-The output after running 'model_test.py' includes:
-* `valid_label_list` Real PPI labels for the test index
-* `test_pre_result_list` Predicted PPI results for the test index
-* `best_f1` Overall performance in terms of best-F1 score
-* `aupr` Performance in terms of AUPR score for all seven PPI types (reaction, binding, ptmod, activation, inhibition, catalysis and expression)
-
-
-recall: 0.5205659756498677, precision: 0.46015125072715357, F1: 0.4884977612594228, AUPRC: [0.4445685  0.53979268 0.19674354 0.45321578 0.18847134 0.54114666,0.11342902]
